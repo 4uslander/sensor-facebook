@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "SensorFacebook.Api\\SensorFacebook.Api.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "SensorFacebook.Worker\\SensorFacebook.Worker.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]
