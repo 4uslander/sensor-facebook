@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SensorFacebook.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6e0db590395afb852169906c1cd224092e0e755e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d1d71c9f611ca4506b094b0d1545cf4cfe68d800")]
 [assembly: System.Reflection.AssemblyProductAttribute("SensorFacebook.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SensorFacebook.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
