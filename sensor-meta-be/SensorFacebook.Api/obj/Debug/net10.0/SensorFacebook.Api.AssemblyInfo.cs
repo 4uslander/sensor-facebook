@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SensorFacebook.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+61ab8ca0f1a56b971c85e8a8382781bf572c3722")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+dfcb1cbbfc6a35fa00793562c95cc9ba6fae47f0")]
 [assembly: System.Reflection.AssemblyProductAttribute("SensorFacebook.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SensorFacebook.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

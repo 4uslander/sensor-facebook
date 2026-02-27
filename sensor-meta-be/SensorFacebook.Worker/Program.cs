@@ -12,15 +12,13 @@ using SensorFacebook.Worker.Handlers;
 using SensorFacebook.Worker.Hosted;
 using SensorFacebook.Worker.Messaging;
 
+Console.WriteLine($"[BOOT] BaseDir = {AppContext.BaseDirectory}");
+Console.WriteLine($"[BOOT] Args = {string.Join(" ", args)}");
+
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((ctx, services) =>
     {
         var cfg = ctx.Configuration;
-
-        // ===== LẤY CONFIG RABBIT =====
-        var rabbitHost = cfg["Rabbit:Host"];
-        var rabbitVhost = cfg["Rabbit:VHost"];
-        var rabbitUser = cfg["Rabbit:User"];
 
         // ===== LOGGING =====
         services.AddLogging(o =>
@@ -32,22 +30,17 @@ var host = Host.CreateDefaultBuilder(args)
             });
         });
 
-        services.PostConfigure<LoggerFilterOptions>(o =>
-        {
-            // nếu muốn filter log thì cấu hình ở đây
-            // ví dụ:
-            // o.MinLevel = LogLevel.Information;
-        });
-
-        // ===== STARTUP LOG HOSTED SERVICE =====
-        services.AddSingleton<IHostedService>(_ =>
-            new StartupLogHostedService(rabbitHost, rabbitVhost, rabbitUser));
+        // ===== BOOT LOGS (để biết chắc đang chạy đúng config) =====
+        var rabbitUri = cfg.GetConnectionString("Rabbit") ?? cfg["Rabbit:Uri"];
+        Console.WriteLine($"[BOOT] Env = {ctx.HostingEnvironment.EnvironmentName}");
+        Console.WriteLine($"[BOOT] RabbitUri = {rabbitUri}");
+        Console.WriteLine($"[BOOT] Queues: low={Queues.SearchLow}, high={Queues.SearchHigh}, health={Queues.ProxyHealth}, notify={Queues.Notify}");
 
         // ===== DB =====
         services.AddDbContextPool<SensorDbContext>(opt =>
             opt.UseNpgsql(cfg.GetConnectionString("Default")));
 
-        // ===== RABBIT + REDIS =====
+        // ===== RABBIT =====
         services.AddRabbitAndRedis(cfg);
 
         // ===== HANDLERS =====
@@ -55,29 +48,29 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddScoped<IMessageHandler<ProxyHealthMsg>, ProxyHealthHandler>();
         services.AddScoped<IMessageHandler<NotifyMsg>, NotifyHandler>();
 
-        // ===== WORKERS =====
-        services.AddHostedService(sp =>
-            new RabbitWorker<SearchJobMsg>(
-                sp.GetRequiredService<RabbitMQ.Client.IConnection>(),
-                Queues.SearchLow,
-                sp.GetRequiredService<IServiceScopeFactory>(),
-                sp.GetRequiredService<ILogger<RabbitWorker<SearchJobMsg>>>()));
+        // ===== WORKERS (log rõ từng consumer được register) =====
+        services.AddSingleton<IHostedService>(sp =>
+    new RabbitWorker<SearchJobMsg>(
+        sp.GetRequiredService<RabbitMQ.Client.IConnection>(),
+        Queues.SearchLow,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<RabbitWorker<SearchJobMsg>>>()));
 
-        services.AddHostedService(sp =>
+        services.AddSingleton<IHostedService>(sp =>
             new RabbitWorker<SearchJobMsg>(
                 sp.GetRequiredService<RabbitMQ.Client.IConnection>(),
                 Queues.SearchHigh,
                 sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetRequiredService<ILogger<RabbitWorker<SearchJobMsg>>>()));
 
-        services.AddHostedService(sp =>
+        services.AddSingleton<IHostedService>(sp =>
             new RabbitWorker<ProxyHealthMsg>(
                 sp.GetRequiredService<RabbitMQ.Client.IConnection>(),
                 Queues.ProxyHealth,
                 sp.GetRequiredService<IServiceScopeFactory>(),
                 sp.GetRequiredService<ILogger<RabbitWorker<ProxyHealthMsg>>>()));
 
-        services.AddHostedService(sp =>
+        services.AddSingleton<IHostedService>(sp =>
             new RabbitWorker<NotifyMsg>(
                 sp.GetRequiredService<RabbitMQ.Client.IConnection>(),
                 Queues.Notify,

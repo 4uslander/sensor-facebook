@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using SensorFacebook.Application.Services.AccountServices;
 using SensorFacebook.Application.Services.AccountServices.Security;
@@ -17,11 +18,6 @@ using SensorFacebook.Application.Services.TokenServices;
 using SensorFacebook.Application.Services.UserServices;
 using SensorFacebook.Infrastructure.Messaging;
 using SensorFacebook.Shared.Abstractions;
-using SensorFacebook.Shared.Options;
-using StackExchange.Redis;
-using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace SensorFacebook.Application.Utilities
 {
@@ -38,40 +34,46 @@ namespace SensorFacebook.Application.Utilities
             services.AddScoped<IUserService, UserService>();
 
             services.AddScoped<ICategoryService, CategoryService>();
-            services.AddScoped<IKeywordService, KeywordService>(); // (KeywordService mới đã bỏ cache)
+            services.AddScoped<IKeywordService, KeywordService>();
             services.AddScoped<IRadiusNormalizer, RadiusNormalizer>();
             services.AddScoped<IKeywordImportExportService, KeywordImportExportService>();
 
             services.AddScoped<IProxyGroupService, ProxyGroupService>();
             services.AddScoped<IProxyHealthService, ProxyHealthService>();
 
-            // Cache abstractions (Category còn dùng)
+            // Cache abstractions
             services.AddScoped<ICacheService, RedisCacheService>();
             services.AddScoped<ICacheBustService, CacheBustService>();
 
-            // ❌ BỎ Redis multiplexer ở đây (để Program.cs lo)
-            // services.AddSingleton<IConnectionMultiplexer>(...)
-
-            // RabbitMQ connection
+            // ===================== RABBITMQ (use URI, not guest/localhost) =====================
             services.AddSingleton<RabbitMQ.Client.IConnection>(sp =>
             {
-                var o = new RabbitMqOptions();
-                cfg.GetSection("RabbitMQ").Bind(o);
+                var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("RabbitConn(Api)");
+
+                // ưu tiên ConnectionStrings:Rabbit, fallback Rabbit:Uri
+                var uri = cfg.GetConnectionString("Rabbit") ?? cfg["Rabbit:Uri"];
+                log.LogInformation("API Rabbit URI = {Uri}", uri);
+
+                if (string.IsNullOrWhiteSpace(uri))
+                    throw new InvalidOperationException(
+                        "Missing Rabbit connection string. Add ConnectionStrings:Rabbit or Rabbit:Uri.");
 
                 var factory = new ConnectionFactory
                 {
-                    HostName = o.HostName,
-                    Port = o.Port,
-                    UserName = o.UserName,
-                    Password = o.Password,
-                    VirtualHost = o.VirtualHost
+                    Uri = new Uri(uri),
+                    // optional: giúp dễ thấy connection trong UI
+                    ClientProvidedName = "sensor-facebook-api"
                 };
 
-                return factory.CreateConnectionAsync().GetAwaiter().GetResult();
+                var conn = factory.CreateConnectionAsync().GetAwaiter().GetResult();
+                log.LogInformation("API Rabbit CONNECTED. Endpoint={Endpoint}", conn.Endpoint?.ToString());
+
+                return conn;
             });
 
             services.AddSingleton<IRabbitInitializer, RabbitInitializer>();
             services.AddSingleton<IBusPublisher, RabbitPublisher>();
+            // =============================================================================
 
             services.AddScoped<ISearchJobService, SearchJobService>();
             services.AddScoped<IListingQueryService, ListingQueryService>();

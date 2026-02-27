@@ -1,9 +1,11 @@
-﻿using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using SensorFacebook.Shared.Messaging;
+using System.Text;
+using System.Text.Json;
 
 namespace SensorFacebook.Worker.Messaging;
 
@@ -16,6 +18,8 @@ public sealed class RabbitWorker<TMsg> : BackgroundService
 
     private IChannel? _channel;
     private AsyncEventingBasicConsumer? _consumer;
+
+    private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
     public RabbitWorker(
         IConnection conn,
@@ -34,11 +38,10 @@ public sealed class RabbitWorker<TMsg> : BackgroundService
         _log.LogInformation("RabbitWorker<{Type}> starting. Queue={Queue} Endpoint={Endpoint}",
             typeof(TMsg).Name, _queue, _conn.Endpoint?.ToString());
 
-        // v7: tạo channel async
         _channel = await _conn.CreateChannelAsync(cancellationToken: stoppingToken);
+        _log.LogInformation("Channel created. Queue={Queue}", _queue);
 
-        // 1 message / worker để dễ debug
-        await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false, cancellationToken: stoppingToken);
+        await _channel.BasicQosAsync(0, 1, false, stoppingToken);
 
         _consumer = new AsyncEventingBasicConsumer(_channel);
 
@@ -47,45 +50,55 @@ public sealed class RabbitWorker<TMsg> : BackgroundService
             _log.LogInformation("Received. Queue={Queue} DeliveryTag={Tag} Bytes={Len}",
                 _queue, ea.DeliveryTag, ea.Body.Length);
 
+            // ✅ RAW payload log (giới hạn để tránh log quá dài)
+            var raw = Encoding.UTF8.GetString(ea.Body.Span);
+            _log.LogInformation("RAW payload ({Bytes}) queue={Queue}: {Raw}",
+                ea.Body.Length, _queue, raw.Length > 500 ? raw[..500] : raw);
+
             try
             {
-                var msg = JsonSerializer.Deserialize<TMsg>(ea.Body.Span);
+                // ✅ deserialize với options đồng nhất publisher
+                var msg = JsonSerializer.Deserialize<TMsg>(ea.Body.Span, _json);
                 if (msg is null) throw new InvalidOperationException("Deserialize returned null");
 
-                using var scope = _scopeFactory.CreateScope();
-                var handler = scope.ServiceProvider.GetRequiredService<IMessageHandler<TMsg>>();
+                // ✅ log jobId sau deserialize (nếu là SearchJobMsg)
+                if (msg is SearchJobMsg sj)
+                {
+                    _log.LogInformation("DESERIALIZED SearchJobMsg: jobId={JobId} keywordId={KeywordId} pg={Pg} acc={Acc} prio={Prio}",
+                        sj.JobId, sj.KeywordId, sj.ProxyGroupId, sj.AccountId, sj.Priority);
 
-                await handler.HandleAsync(msg, stoppingToken);
+                    if (sj.JobId == Guid.Empty)
+                    {
+                        _log.LogError("INVALID SearchJobMsg received (empty JobId). Drop message.");
+                        await _channel!.BasicAckAsync(ea.DeliveryTag, false, stoppingToken);
+                        return;
+                    }
+                }
 
-                await _channel.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: stoppingToken);
+                // ✅ dùng async scope để DI dispose đúng IAsyncDisposable
+                await using (var scope = _scopeFactory.CreateAsyncScope())
+                {
+                    var handler = scope.ServiceProvider.GetRequiredService<IMessageHandler<TMsg>>();
+                    await handler.HandleAsync(msg, stoppingToken);
+                } // ✅ DisposeAsync xảy ra ở đây. Nếu fail sẽ vào catch.
+
+                // ✅ Ack sau khi handler + DisposeAsync đều OK
+                await _channel!.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: stoppingToken);
                 _log.LogInformation("Ack OK. Queue={Queue} DeliveryTag={Tag}", _queue, ea.DeliveryTag);
             }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Handle FAILED. Queue={Queue} DeliveryTag={Tag}", _queue, ea.DeliveryTag);
 
-                // requeue=true để thử lại; nếu có DLX/poison thì tuỳ chiến lược đổi thành false
-                await _channel.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true, cancellationToken: stoppingToken);
+                // requeue=true để thử lại (hoặc false nếu bạn muốn đẩy DLX/poison)
+                await _channel!.BasicNackAsync(ea.DeliveryTag, multiple: false, requeue: true, cancellationToken: stoppingToken);
             }
         };
+        _log.LogInformation("SUBSCRIBE queue={Queue}", _queue);
+        var tag = await _channel.BasicConsumeAsync(_queue, autoAck: false, _consumer, stoppingToken);
+        _log.LogInformation("Consuming started. Queue={Queue} ConsumerTag={Tag}", _queue, tag);
 
-        var consumerTag = await _channel.BasicConsumeAsync(
-            queue: _queue,
-            autoAck: false,
-            consumer: _consumer,
-            cancellationToken: stoppingToken);
-
-        _log.LogInformation("Consuming started. Queue={Queue} ConsumerTag={Tag}", _queue, consumerTag);
-
-        // GIỮ SERVICE SỐNG: nếu thiếu dòng này, consumer sẽ chết và UI sẽ về 0
-        try
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-            // normal shutdown
-        }
+        await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -98,7 +111,7 @@ public sealed class RabbitWorker<TMsg> : BackgroundService
                 await _channel.DisposeAsync();
             }
         }
-        catch { /* ignore */ }
+        catch { }
 
         await base.StopAsync(cancellationToken);
     }
